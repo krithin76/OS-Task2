@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reader Writer Semaphore Simulation</title>
+<style>
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #101827;
+  color: white;
+  text-align: center;
+}
+header { background: #1e293b; padding: 20px; }
+h1 { color: #38bdf8; }
+main { max-width: 900px; margin: auto; padding: 15px; }
+.card {
+  background: #1e293b;
+  padding: 18px;
+  border-radius: 12px;
+  margin: 15px 0;
+}
+#dbStatus { font-size: 22px; font-weight: bold; }
+#dbValue { color: #facc15; font-size: 22px; margin: 12px; }
+.stats, .processes, .controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stat {
+  background: #334155;
+  padding: 14px;
+  border-radius: 9px;
+  min-width: 130px;
+}
+.stat strong { color: #38bdf8; }
+.value { color: #facc15; font-size: 24px; margin-top: 8px; }
+.process {
+  background: #334155;
+  border: 2px solid #64748b;
+  border-radius: 10px;
+  padding: 15px;
+  min-width: 115px;
+}
+.process .emoji { font-size: 30px; }
+.process.active-reader {
+  background: #065f46;
+  border-color: #4ade80;
+}
+.process.active-writer {
+  background: #7f1d1d;
+  border-color: #f87171;
+}
+.process.waiting { border-color: #facc15; }
+.status { font-size: 13px; min-height: 28px; }
+button {
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+.start { background: #4ade80; }
+.pause { background: #facc15; }
+.reset { background: #f87171; }
+#log {
+  text-align: left;
+  font: 13px monospace;
+  line-height: 1.8;
+  height: 190px;
+  overflow-y: auto;
+}
+.explain { text-align: left; line-height: 1.7; color: #cbd5e1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Reader–Writer Problem</h1>
+  <p>Semaphore Synchronization Simulation</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Shared Database</h2>
+    <div id="dbStatus">Database: IDLE</div>
+    <div id="dbValue">Data Value: 100</div>
+    <div id="readerCount">Active Readers: 0</div>
+  </div>
+
+  <div class="card">
+    <h2>Semaphore Values</h2>
+    <div class="stats">
+      <div class="stat">
+        <strong>mutex</strong>
+        <div class="value" id="mutex">1</div>
+        <small>Protects reader count</small>
+      </div>
+      <div class="stat">
+        <strong>wrt</strong>
+        <div class="value" id="wrt">1</div>
+        <small>Controls database access</small>
+      </div>
+    </div>
+  </div>
+
+  <h2>Processes</h2>
+  <div class="processes" id="processes"></div>
+
+  <div class="controls" style="margin:20px">
+    <button class="start" onclick="start()">▶ Start</button>
+    <button class="pause" onclick="pause()">⏸ Pause</button>
+    <button class="reset" onclick="reset()">↻ Reset</button>
+  </div>
+
+  <div class="card">
+    <h2>Execution Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card explain">
+    <h2>Working Principle</h2>
+    <p><b>1.</b> A reader executes wait(mutex) before changing readerCount.</p>
+    <p><b>2.</b> The first reader executes wait(wrt), preventing writers from entering.</p>
+    <p><b>3.</b> Multiple readers can read the database simultaneously.</p>
+    <p><b>4.</b> The last reader executes signal(wrt), allowing a writer to enter.</p>
+    <p><b>5.</b> A writer executes wait(wrt) before writing and signal(wrt) afterward.</p>
+    <p><b>Note:</b> This simulation demonstrates the readers-preference solution. Continuous arrivals of readers may cause writer starvation.</p>
+  </div>
+</main>
+
+<script>
+const ids = ["R1", "R2", "R3", "W1", "W2"];
+let mutex, wrt, readers, writer, value, states;
+let next, running, timer, current, waitingR, waitingW;
+const $ = id => document.getElementById(id);
+
+function init() {
+  mutex = 1; wrt = 1; readers = [];
+  writer = null; value = 100; states = {};
+  next = 0; current = null;
+  waitingR = []; waitingW = [];
+}
+
+function log(message) {
+  const line = document.createElement("div");
+  line.textContent = new Date().toLocaleTimeString() + " — " + message;
+  $("log").appendChild(line);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function render() {
+  $("mutex").textContent = mutex;
+  $("wrt").textContent = wrt;
+  $("dbValue").textContent = "Data Value: " + value;
+  $("readerCount").textContent = "Active Readers: " + readers.length;
+  $("dbStatus").textContent = writer ? writer + " IS WRITING" :
+    readers.length ? "READERS ARE READING" : "Database: IDLE";
+
+  $("dbStatus").style.color = writer ? "#f87171" :
+    readers.length ? "#4ade80" : "#cbd5e1";
+
+  $("processes").innerHTML = ids.map(id => {
+    const isReader = id.startsWith("R");
+    const state = states[id] || "Ready";
+    const active = state === "Reading" || state === "Writing";
+    return `<div class="process ${active ?
+      (isReader ? "active-reader" : "active-writer") :
+      state === "Waiting" ? "waiting" : ""}">
+      <div class="emoji">${isReader ? "👤" : "✍️"}</div>
+      <b>${isReader ? "Reader" : "Writer"} ${id[1]}</b>
+      <p class="status">${state}</p></div>`;
+  }).join("");
+}
+
+// Reader entry: wait(mutex), update readerCount, signal(mutex)
+function startReader(id) {
+  if (writer || waitingW.length) {
+    if (!waitingR.includes(id)) waitingR.push(id);
+    states[id] = "Waiting";
+    log(id + " waits for access.");
+    return false;
+  }
+
+  mutex = 0;
+  log(id + " executes wait(mutex).");
+
+  if (readers.length === 0) {
+    if (wrt === 0) {
+      mutex = 1;
+      waitingR.push(id);
+      states[id] = "Waiting";
+      return false;
+    }
+    wrt = 0;
+    log(id + " is the first reader: wait(wrt).");
+  }
+
+  readers.push(id);
+  mutex = 1;
+  states[id] = "Reading";
+  log(id + " executes signal(mutex) and starts reading.");
+  return true;
+}
+
+function finishReader(id) {
+  mutex = 0;
+  readers = readers.filter(x => x !== id);
+  log(id + " finishes reading; reader count = " + readers.length);
+
+  if (readers.length === 0) {
+    wrt = 1;
+    log(id + " is the last reader: signal(wrt).");
+  }
+
+  mutex = 1;
+  states[id] = "Finished";
+  wakeProcesses();
+}
+
+function startWriter(id) {
+  if (writer || readers.length) {
+    if (!waitingW.includes(id)) waitingW.push(id);
+    states[id] = "Waiting";
+    log(id + " waits for wrt.");
+    return false;
+  }
+
+  if (wrt === 0) {
+    if (!waitingW.includes(id)) waitingW.push(id);
+    states[id] = "Waiting";
+    return false;
+  }
+
+  wrt = 0;
+  writer = id;
+  states[id] = "Writing";
+  log(id + " executes wait(wrt) and starts writing.");
+  return true;
+}
+
+function finishWriter(id) {
+  value += 10;
+  writer = null;
+  wrt = 1;
+  states[id] = "Finished";
+  log(id + " finishes writing and executes signal(wrt).");
+  log("Database value updated to " + value + ".");
+  wakeProcesses();
+}
+
+function wakeProcesses() {
+  if (writer || readers.length) return;
+
+  if (waitingW.length) {
+    const id = waitingW.shift();
+    if (startWriter(id)) {
+      current = { id, type: "W", end: Date.now() + 2000 };
+    }
+  } else {
+    const list = waitingR.splice(0);
+    for (const id of list) {
+      if (startReader(id) && !current) {
+        current = { id, type: "R", end: Date.now() + 2000 };
+      }
+    }
+  }
+}
+
+function tick() {
+  if (!running) return;
+  const now = Date.now();
+
+  if (current && now >= current.end) {
+    const op = current;
+    current = null;
+    if (op.type === "R") finishReader(op.id);
+    else finishWriter(op.id);
+  }
+
+  if (!current && !writer) {
+    let id = ids[next++ % ids.length];
+
+    if (readers.length === 0 && waitingW.length) {
+      id = waitingW.shift();
+    } else if (!waitingW.length && waitingR.length) {
+      id = waitingR.shift();
+    }
+
+    if (id.startsWith("R")) {
+      if (startReader(id)) current = {
+        id, type: "R", end: now + 2000
+      };
+    } else if (startWriter(id)) {
+      current = { id, type: "W", end: now + 2000 };
+    }
+  }
+
+  render();
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  log("Semaphore simulation started.");
+  timer = setInterval(tick, 200);
+}
+
+function pause() {
+  running = false;
+  clearInterval(timer);
+  timer = null;
+  log("Simulation paused.");
+}
+
+function reset() {
+  pause();
+  init();
+  $("log").innerHTML = "";
+  log("Simulation reset. Click Start.");
+  render();
+}
+
+init();
+running = false;
+log("Ready. Click Start to begin.");
+render();
+</script>
+</body>
+</html>
