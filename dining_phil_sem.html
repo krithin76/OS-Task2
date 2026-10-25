@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dining Philosophers - Semaphore Simulation</title>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    background: #101827;
+    color: white;
+}
+h1 { color: #39ff88; }
+p { color: #cbd5e1; }
+
+.table {
+    width: 330px;
+    height: 330px;
+    margin: 25px auto;
+    border-radius: 50%;
+    border: 5px solid #52627a;
+    background: #1e293b;
+    position: relative;
+}
+
+.center {
+    position: absolute;
+    width: 115px;
+    height: 115px;
+    top: 107px;
+    left: 107px;
+    border-radius: 50%;
+    background: #334155;
+    display: grid;
+    place-items: center;
+    color: #39ff88;
+    font-weight: bold;
+}
+
+.philosopher, .fork {
+    position: absolute;
+    transform: translate(-50%, -50%);
+}
+
+.philosopher {
+    width: 76px;
+    height: 65px;
+    border: 3px solid #94a3b8;
+    border-radius: 15px;
+    background: #263449;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    z-index: 2;
+    transition: .3s;
+}
+
+.thinking { background: #263449; }
+.hungry { background: #815b12; border-color: #facc15; }
+.eating {
+    background: #087443;
+    border-color: #39ff88;
+    box-shadow: 0 0 15px #39ff8877;
+}
+
+.fork {
+    font-size: 28px;
+    z-index: 3;
+}
+.free { color: #e2e8f0; }
+.busy { color: #facc15; }
+
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin: 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.start { background: #39ff88; }
+.pause { background: #facc15; }
+.reset { background: #fb7185; }
+
+.panel {
+    background: #1e293b;
+    max-width: 450px;
+    margin: 18px auto;
+    padding: 15px;
+    border-radius: 12px;
+}
+.status {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+.item {
+    padding: 10px;
+    border-radius: 8px;
+    background: #334155;
+}
+#log {
+    text-align: left;
+    font-size: 13px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+</style>
+</head>
+
+<body>
+<h1>🍽 Dining Philosophers</h1>
+<p>Four Philosophers Using Semaphores</p>
+
+<div class="table" id="table">
+    <div class="center">SHARED<br>TABLE</div>
+</div>
+
+<div>
+    <button class="start" onclick="startSimulation()">▶ Start</button>
+    <button class="pause" onclick="pauseSimulation()">⏸ Pause</button>
+    <button class="reset" onclick="location.reload()">↻ Reset</button>
+</div>
+
+<div class="panel">
+    <h3>Philosopher Status</h3>
+    <div class="status" id="status"></div>
+</div>
+
+<div class="panel">
+    <h3>Simulation Statistics</h3>
+    <p>Meals eaten: <strong id="meals">0</strong></p>
+    <p>Forks currently in use: <strong id="used">0</strong></p>
+    <p id="state">Simulation stopped</p>
+</div>
+
+<div class="panel">
+    <h3>Semaphore Activity Log</h3>
+    <div id="log">Waiting to start...</div>
+</div>
+
+<script>
+const N = 4;
+
+// Counting semaphore: at most N-1 philosophers compete.
+class Semaphore {
+    constructor(value) {
+        this.value = value;
+        this.queue = [];
+    }
+
+    acquire() {
+        return new Promise(resolve => {
+            if (this.value > 0) {
+                this.value--;
+                resolve();
+            } else {
+                this.queue.push(resolve);
+            }
+        });
+    }
+
+    release() {
+        if (this.queue.length > 0) {
+            this.queue.shift()();
+        } else {
+            this.value++;
+        }
+    }
+}
+
+const room = new Semaphore(N - 1);
+const forks = Array.from({ length: N }, () => new Semaphore(1));
+
+let running = false;
+let meals = 0;
+let activeForks = 0;
+let philosopherStates = Array(N).fill("Thinking");
+let logElement = document.getElementById("log");
+
+function createTable() {
+    const table = document.getElementById("table");
+
+    for (let i = 0; i < N; i++) {
+        const angle = (i * 90 - 90) * Math.PI / 180;
+
+        const p = document.createElement("div");
+        p.className = "philosopher thinking";
+        p.id = "p" + i;
+        p.style.left = (50 + 40 * Math.cos(angle)) + "%";
+        p.style.top = (50 + 40 * Math.sin(angle)) + "%";
+        p.innerHTML = `🧑‍🍳<span>P${i + 1}</span><span class="label">Thinking</span>`;
+        table.appendChild(p);
+
+        const fa = (i * 90 - 45) * Math.PI / 180;
+        const f = document.createElement("div");
+        f.className = "fork free";
+        f.id = "f" + i;
+        f.textContent = "🍴";
+        f.style.left = (50 + 25 * Math.cos(fa)) + "%";
+        f.style.top = (50 + 25 * Math.sin(fa)) + "%";
+        table.appendChild(f);
+    }
+
+    updateDisplay();
+}
+
+function log(message) {
+    const line = document.createElement("div");
+    line.textContent = new Date().toLocaleTimeString() + " — " + message;
+    logElement.prepend(line);
+
+    while (logElement.children.length > 30) {
+        logElement.lastChild.remove();
+    }
+}
+
+function setState(i, state) {
+    philosopherStates[i] = state;
+    const el = document.getElementById("p" + i);
+    el.className = "philosopher " + state.toLowerCase();
+    el.querySelector(".label").textContent = state;
+    updateDisplay();
+}
+
+function updateDisplay() {
+    document.getElementById("status").innerHTML =
+        philosopherStates.map((s, i) =>
+            `<div class="item">Philosopher ${i + 1}<br>${s}</div>`
+        ).join("");
+
+    document.getElementById("meals").textContent = meals;
+    document.getElementById("used").textContent = activeForks;
+
+    for (let i = 0; i < N; i++) {
+        const leftFork = document.getElementById("f" + i);
+        // A fork is shown as occupied while its owner is eating.
+        leftFork.className = "fork " +
+            (philosopherStates[i] === "Eating" ||
+             philosopherStates[(i + 1) % N] === "Eating"
+                ? "busy" : "free");
+    }
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitUntilRunning() {
+    while (!running) {
+        await delay(100);
+    }
+}
+
+async function philosopher(i) {
+    const left = i;
+    const right = (i + 1) % N;
+
+    while (true) {
+        await waitUntilRunning();
+
+        setState(i, "Thinking");
+        await delay(700 + Math.random() * 800);
+
+        await waitUntilRunning();
+        setState(i, "Hungry");
+        log(`P${i + 1} is hungry and requests the semaphore.`);
+
+        // Enter the room: only three philosophers may compete.
+        await room.acquire();
+
+        let leftAcquired = false;
+        let rightAcquired = false;
+
+        try {
+            log(`P${i + 1} entered the room.`);
+
+            await forks[left].acquire();
+            leftAcquired = true;
+            log(`P${i + 1} acquired fork ${left + 1}.`);
+
+            await forks[right].acquire();
+            rightAcquired = true;
+            log(`P${i + 1} acquired fork ${right + 1}.`);
+
+            activeForks += 2;
+            setState(i, "Eating");
+            log(`P${i + 1} is eating.`);
+
+            await delay(1000 + Math.random() * 1000);
+
+            meals++;
+            log(`P${i + 1} finished eating.`);
+        } finally {
+            if (rightAcquired) {
+                forks[right].release();
+            }
+            if (leftAcquired) {
+                forks[left].release();
+            }
+
+            if (leftAcquired && rightAcquired) {
+                activeForks -= 2;
+            }
+
+            room.release();
+            setState(i, "Thinking");
+            log(`P${i + 1} released forks and room semaphore.`);
+        }
+
+        updateDisplay();
+    }
+}
+
+function startSimulation() {
+    if (running) return;
+    running = true;
+    document.getElementById("state").textContent = "Simulation running";
+}
+
+function pauseSimulation() {
+    running = false;
+    document.getElementById("state").textContent =
+        "Paused: current operation will finish safely";
+}
+
+createTable();
+
+// Start one independent process for each philosopher.
+for (let i = 0; i < N; i++) {
+    philosopher(i);
+}
+</script>
+</body>
+</html>
