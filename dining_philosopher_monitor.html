@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dining Philosophers Using Monitor</title>
+
+<style>
+body {
+    margin: 0;
+    background: #101827;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+h1 { color: #39ff88; }
+.subtitle { color: #cbd5e1; }
+
+.table {
+    width: 330px;
+    height: 330px;
+    margin: 25px auto;
+    border-radius: 50%;
+    border: 5px solid #52627a;
+    background: #1e293b;
+    position: relative;
+}
+.center {
+    position: absolute;
+    width: 115px;
+    height: 115px;
+    top: 107px;
+    left: 107px;
+    border-radius: 50%;
+    background: #334155;
+    display: grid;
+    place-items: center;
+    color: #39ff88;
+    font-weight: bold;
+}
+.philosopher, .fork {
+    position: absolute;
+    transform: translate(-50%, -50%);
+}
+.philosopher {
+    width: 76px;
+    height: 65px;
+    border: 3px solid #94a3b8;
+    border-radius: 15px;
+    background: #263449;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    transition: .3s;
+    z-index: 2;
+}
+.thinking { background: #263449; }
+.hungry { background: #815b12; border-color: #facc15; }
+.eating {
+    background: #087443;
+    border-color: #39ff88;
+    box-shadow: 0 0 15px #39ff8877;
+}
+.fork { font-size: 27px; z-index: 3; }
+.free { color: #e2e8f0; }
+.busy { color: #facc15; }
+
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin: 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.start { background: #39ff88; }
+.pause { background: #facc15; }
+.reset { background: #fb7185; }
+
+.panel {
+    background: #1e293b;
+    max-width: 480px;
+    margin: 18px auto;
+    padding: 15px;
+    border-radius: 12px;
+}
+.status {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+.item {
+    background: #334155;
+    padding: 10px;
+    border-radius: 8px;
+}
+#log {
+    text-align: left;
+    font-size: 13px;
+    max-height: 145px;
+    overflow-y: auto;
+}
+</style>
+</head>
+
+<body>
+<h1>🍽 Dining Philosophers</h1>
+<p class="subtitle">Monitor-Based Synchronization</p>
+
+<div class="table" id="table">
+    <div class="center">MONITOR<br>TABLE</div>
+</div>
+
+<div>
+    <button class="start" onclick="startSimulation()">▶ Start</button>
+    <button class="pause" onclick="pauseSimulation()">⏸ Pause</button>
+    <button class="reset" onclick="resetSimulation()">↻ Reset</button>
+</div>
+
+<div class="panel">
+    <h3>Philosopher Status</h3>
+    <div class="status" id="status"></div>
+</div>
+
+<div class="panel">
+    <h3>Statistics</h3>
+    <p>Meals eaten: <b id="meals">0</b></p>
+    <p>Forks in use: <b id="used">0</b></p>
+    <p id="runState">Simulation stopped</p>
+</div>
+
+<div class="panel">
+    <h3>Monitor Activity Log</h3>
+    <div id="log">Waiting to start...</div>
+</div>
+
+<script>
+const N = 4;
+const THINKING = "Thinking";
+const HUNGRY = "Hungry";
+const EATING = "Eating";
+
+let states = Array(N).fill(THINKING);
+let meals = Array(N).fill(0);
+let running = false;
+let generation = 0;
+let tasks = [];
+let logElement = document.getElementById("log");
+
+// Monitor: controls access to the shared philosopher states.
+// JavaScript callbacks run one at a time on the event loop.
+const monitor = {
+    test(i) {
+        const left = (i + N - 1) % N;
+        const right = (i + 1) % N;
+
+        if (
+            states[i] === HUNGRY &&
+            states[left] !== EATING &&
+            states[right] !== EATING
+        ) {
+            states[i] = EATING;
+            log(`Monitor allows P${i + 1} to eat.`);
+            return true;
+        }
+        return false;
+    },
+
+    pickup(i) {
+        states[i] = HUNGRY;
+        log(`P${i + 1} enters monitor and requests forks.`);
+        this.test(i);
+        updateDisplay();
+
+        return states[i] === EATING;
+    },
+
+    putdown(i) {
+        states[i] = THINKING;
+        log(`P${i + 1} puts down both forks.`);
+
+        // Check neighboring philosophers waiting to eat.
+        this.test((i + N - 1) % N);
+        this.test((i + 1) % N);
+        updateDisplay();
+    }
+};
+
+function createTable() {
+    const table = document.getElementById("table");
+
+    for (let i = 0; i < N; i++) {
+        const angle = (i * 90 - 90) * Math.PI / 180;
+
+        const p = document.createElement("div");
+        p.id = "p" + i;
+        p.className = "philosopher thinking";
+        p.style.left = (50 + 40 * Math.cos(angle)) + "%";
+        p.style.top = (50 + 40 * Math.sin(angle)) + "%";
+        p.innerHTML =
+            `🧑‍🍳<span>P${i + 1}</span><span class="label">Thinking</span>`;
+        table.appendChild(p);
+
+        const fa = (i * 90 - 45) * Math.PI / 180;
+        const f = document.createElement("div");
+        f.id = "f" + i;
+        f.className = "fork free";
+        f.textContent = "🍴";
+        f.style.left = (50 + 25 * Math.cos(fa)) + "%";
+        f.style.top = (50 + 25 * Math.sin(fa)) + "%";
+        table.appendChild(f);
+    }
+}
+
+function log(message) {
+    const line = document.createElement("div");
+    line.textContent = new Date().toLocaleTimeString() + " — " + message;
+    logElement.prepend(line);
+
+    while (logElement.children.length > 30) {
+        logElement.lastChild.remove();
+    }
+}
+
+function updateDisplay() {
+    document.getElementById("status").innerHTML =
+        states.map((s, i) =>
+            `<div class="item">Philosopher ${i + 1}<br>${s}<br>Meals: ${meals[i]}</div>`
+        ).join("");
+
+    document.getElementById("meals").textContent =
+        meals.reduce((a, b) => a + b, 0);
+
+    const eating = states.filter(s => s === EATING).length;
+    document.getElementById("used").textContent = eating * 2;
+
+    for (let i = 0; i < N; i++) {
+        const p = document.getElementById("p" + i);
+        p.className = "philosopher " + states[i].toLowerCase();
+        p.querySelector(".label").textContent = states[i];
+
+        const f = document.getElementById("f" + i);
+        f.className = "fork " +
+            (states[i] === EATING ||
+             states[(i + 1) % N] === EATING ? "busy" : "free");
+    }
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitWhilePaused(token) {
+    while (!running && token === generation) {
+        await delay(100);
+    }
+    return token === generation;
+}
+
+async function philosopher(i, token) {
+    while (token === generation) {
+        if (!await waitWhilePaused(token)) return;
+
+        states[i] = THINKING;
+        updateDisplay();
+        await delay(600 + Math.random() * 800);
+
+        if (!await waitWhilePaused(token)) return;
+
+        // Request permission from the monitor.
+        const granted = monitor.pickup(i);
+
+        if (!granted) {
+            // Condition-variable-style waiting: retry after a short wait.
+            while (token === generation && states[i] !== EATING) {
+                if (!await waitWhilePaused(token)) return;
+                await delay(200);
+                monitor.test(i);
+                updateDisplay();
+            }
+        }
+
+        if (token !== generation) return;
+
+        // Keep the eating state and its forks while paused.
+        while (!running && token === generation) {
+            await delay(100);
+        }
+        if (token !== generation) return;
+
+        await delay(900 + Math.random() * 700);
+        if (token !== generation) return;
+
+        meals[i]++;
+        monitor.putdown(i);
+        updateDisplay();
+    }
+}
+
+function startSimulation() {
+    if (running) return;
+
+    running = true;
+    document.getElementById("runState").textContent = "Simulation running";
+
+    if (tasks.length === 0) {
+        const token = generation;
+        tasks = Array.from({ length: N }, (_, i) =>
+            philosopher(i, token)
+        );
+    }
+}
+
+function pauseSimulation() {
+    running = false;
+    document.getElementById("runState").textContent = "Simulation paused";
+}
+
+function resetSimulation() {
+    running = false;
+    generation++;
+    tasks = [];
+    states = Array(N).fill(THINKING);
+    meals = Array(N).fill(0);
+    logElement.textContent = "Simulation reset.";
+    document.getElementById("runState").textContent = "Simulation stopped";
+    updateDisplay();
+}
+
+createTable();
+updateDisplay();
+</script>
+</body>
+</html>
