@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reader Writer Monitor Simulation</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial;background:#101827;color:white;text-align:center}
+header{background:#1e293b;padding:20px}
+h1{color:#38bdf8}
+main{max-width:950px;margin:auto;padding:15px}
+.card{background:#1e293b;border:1px solid #475569;border-radius:12px;padding:18px;margin:15px 0}
+h2{color:#38bdf8}
+#dbStatus{font-size:22px;font-weight:bold}
+#dbValue{font-size:22px;color:#facc15;margin:12px}
+.stats,.processes,.controls{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
+.stat{background:#334155;padding:14px;border-radius:9px;min-width:130px}
+.stat strong{color:#38bdf8}
+.value{font-size:23px;color:#facc15;margin-top:8px}
+.process{background:#334155;border:2px solid #64748b;border-radius:10px;padding:14px;min-width:125px}
+.emoji{font-size:30px}
+.status{font-size:13px;min-height:28px}
+.active-reader{background:#065f46;border-color:#4ade80}
+.active-writer{background:#7f1d1d;border-color:#f87171}
+.waiting{border-color:#facc15}
+button{padding:12px 20px;border:0;border-radius:8px;font-weight:bold;cursor:pointer}
+.start{background:#4ade80}.pause{background:#facc15}.reset{background:#f87171}
+#log{text-align:left;font:13px monospace;line-height:1.8;height:190px;overflow-y:auto}
+.explain{text-align:left;line-height:1.8;color:#cbd5e1}
+</style>
+</head>
+<body>
+<header>
+<h1>Reader–Writer Problem</h1>
+<p>Monitor Synchronization Simulation</p>
+</header>
+
+<main>
+<div class="card">
+<h2>Shared Database</h2>
+<div id="dbStatus">Database: IDLE</div>
+<div id="dbValue">Data Value: 100</div>
+<div id="readerCount">Active Readers: 0</div>
+</div>
+
+<div class="card">
+<h2>Monitor State</h2>
+<div class="stats">
+<div class="stat"><strong>Active Readers</strong><div class="value" id="activeCount">0</div></div>
+<div class="stat"><strong>Active Writer</strong><div class="value" id="activeWriter">None</div></div>
+<div class="stat"><strong>Waiting Readers</strong><div class="value" id="waitingReaders">0</div></div>
+<div class="stat"><strong>Waiting Writers</strong><div class="value" id="waitingWriters">0</div></div>
+</div>
+<p>Condition variables: <b>canRead</b> and <b>canWrite</b></p>
+</div>
+
+<h2>Processes</h2>
+<div class="processes" id="processes"></div>
+
+<div class="controls" style="margin:20px">
+<button class="start" onclick="start()">▶ Start</button>
+<button class="pause" onclick="pause()">⏸ Pause</button>
+<button class="reset" onclick="reset()">↻ Reset</button>
+</div>
+
+<div class="card">
+<h2>Monitor Execution Log</h2>
+<div id="log"></div>
+</div>
+
+<div class="card explain">
+<h2>Working Principle</h2>
+<p><b>1. Monitor:</b> Encapsulates shared data and procedures so only one process executes monitor code at a time.</p>
+<p><b>2. startRead():</b> A reader waits on <code>canRead</code> if a writer is active or waiting.</p>
+<p><b>3. endRead():</b> The last reader signals <code>canWrite</code> when a writer is waiting.</p>
+<p><b>4. startWrite():</b> A writer waits on <code>canWrite</code> until all readers and writers leave the database.</p>
+<p><b>5. endWrite():</b> The writer signals another waiting writer first, or signals readers if no writer is waiting.</p>
+<p><b>Note:</b> This is a JavaScript animation of monitor-style synchronization. It illustrates mutual exclusion and condition-variable behavior; it is not a real multithreaded monitor.</p>
+</div>
+</main>
+
+<script>
+const ids=["R1","R2","R3","W1","W2"];
+let value,readers,writer,waitingR,waitingW,states;
+let running=false,timer=null,next=0,current=null;
+
+function init(){
+ value=100;
+ readers=[];
+ writer=null;
+ waitingR=[];
+ waitingW=[];
+ states={};
+ next=0;
+ current=null;
+}
+
+function log(message){
+ const line=document.createElement("div");
+ line.textContent="["+new Date().toLocaleTimeString()+"] "+message;
+ document.getElementById("log").appendChild(line);
+ document.getElementById("log").scrollTop=
+   document.getElementById("log").scrollHeight;
+}
+
+function render(){
+ document.getElementById("dbValue").textContent="Data Value: "+value;
+ document.getElementById("readerCount").textContent="Active Readers: "+readers.length;
+ document.getElementById("activeCount").textContent=readers.length;
+ document.getElementById("activeWriter").textContent=writer||"None";
+ document.getElementById("waitingReaders").textContent=waitingR.length;
+ document.getElementById("waitingWriters").textContent=waitingW.length;
+
+ const status=document.getElementById("dbStatus");
+ status.textContent=writer?writer+" IS WRITING":
+   readers.length?"READERS ARE READING":"Database: IDLE";
+ status.style.color=writer?"#f87171":readers.length?"#4ade80":"#cbd5e1";
+
+ document.getElementById("processes").innerHTML=ids.map(id=>{
+   const r=id.startsWith("R"),s=states[id]||"Ready";
+   let cls=s==="Reading"?"active-reader":
+           s==="Writing"?"active-writer":
+           s==="Waiting"?"waiting":"";
+   return `<div class="process ${cls}">
+    <div class="emoji">${r?"👤":"✍️"}</div>
+    <b>${r?"Reader":"Writer"} ${id[1]}</b>
+    <p class="status">${s}</p></div>`;
+ }).join("");
+}
+
+// Monitor procedure: startRead
+function startRead(id){
+ if(writer||waitingW.length>0){
+   if(!waitingR.includes(id))waitingR.push(id);
+   states[id]="Waiting";
+   log(id+" waits on condition variable canRead.");
+   return false;
+ }
+ readers.push(id);
+ states[id]="Reading";
+ log(id+" enters monitor startRead() and begins reading.");
+ return true;
+}
+
+// Monitor procedure: endRead
+function endRead(id){
+ readers=readers.filter(x=>x!==id);
+ states[id]="Finished";
+ log(id+" finishes reading and leaves the monitor.");
+
+ if(readers.length===0&&waitingW.length>0){
+   log("Last reader signals condition variable canWrite.");
+   wakeWriter();
+ }
+}
+
+// Monitor procedure: startWrite
+function startWrite(id){
+ if(writer||readers.length>0){
+   if(!waitingW.includes(id))waitingW.push(id);
+   states[id]="Waiting";
+   log(id+" waits on condition variable canWrite.");
+   return false;
+ }
+ writer=id;
+ states[id]="Writing";
+ log(id+" enters monitor startWrite() and begins writing.");
+ return true;
+}
+
+// Monitor procedure: endWrite
+function endWrite(id){
+ value+=10;
+ writer=null;
+ states[id]="Finished";
+ log(id+" finishes writing. Database value = "+value+".");
+
+ if(waitingW.length>0){
+   log("Monitor signals canWrite for the next writer.");
+   wakeWriter();
+ }else{
+   wakeReaders();
+ }
+}
+
+function wakeWriter(){
+ if(writer||readers.length||!waitingW.length)return;
+ const id=waitingW.shift();
+ if(startWrite(id)){
+   current={id,type:"W",end:Date.now()+2200};
+ }
+}
+
+function wakeReaders(){
+ if(writer||waitingW.length)return;
+ const list=waitingR.splice(0);
+ list.forEach(id=>{
+   if(startRead(id)&&!current){
+     current={id,type:"R",end:Date.now()+2200};
+   }
+ });
+}
+
+function tick(){
+ if(!running)return;
+ const now=Date.now();
+
+ if(current&&now>=current.end){
+   const op=current;
+   current=null;
+   if(op.type==="R")endRead(op.id);
+   else endWrite(op.id);
+ }
+
+ if(!current&&!writer){
+   let id=ids[next++%ids.length];
+
+   if(readers.length===0&&waitingW.length){
+     id=waitingW.shift();
+   }else if(!waitingW.length&&waitingR.length){
+     id=waitingR.shift();
+   }
+
+   if(id.startsWith("R")){
+     if(startRead(id))current={id,type:"R",end:now+2200};
+   }else{
+     if(startWrite(id))current={id,type:"W",end:now+2200};
+   }
+ }
+ render();
+}
+
+function start(){
+ if(running)return;
+ running=true;
+ log("Monitor simulation started.");
+ timer=setInterval(tick,200);
+}
+
+function pause(){
+ running=false;
+ clearInterval(timer);
+ timer=null;
+ log("Simulation paused.");
+}
+
+function reset(){
+ pause();
+ init();
+ document.getElementById("log").innerHTML="";
+ log("Reset complete. Click Start to begin.");
+ render();
+}
+
+init();
+log("Ready. Click Start to begin.");
+render();
+</script>
+</body>
+</html>
